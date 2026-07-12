@@ -1,0 +1,488 @@
+# System Architecture - Enterprise GRC SaaS Platform
+
+## 1. High-Level System Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                          PRESENTATION LAYER                                │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  React/Next.js Frontend  │  Admin Dashboard  │  Reporting Console          │
+│  (Web, Mobile Responsive)│  (Tenant Portal)  │  (Analytics & Reports)      │
+└────────────────┬──────────┴───────────────────┴──────────────────────────────┘
+                 │
+                 │ HTTPS/REST API + WebSocket
+                 ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        API GATEWAY LAYER                                    │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  • Request Routing      • Rate Limiting      • API Versioning (v1/v2)       │
+│  • Authentication       • Request Validation • Response Transformation       │
+│  • Load Balancing       • Logging            • CORS Handling                │
+└────────────────┬────────────────────────────────────────────────────────────┘
+                 │
+     ┌───────────┴────────────┬────────────────┬────────────────┐
+     │                        │                │                │
+     ▼                        ▼                ▼                ▼
+┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐
+│ Auth Service │  │  Core API    │  │ Modules API  │  │ Admin API    │
+│ • OAuth/SAML │  │ • Tenants    │  │ • ITAM       │  │ • Billing    │
+│ • JWT Tokens │  │ • Users      │  │ • ITSM       │  │ • Analytics  │
+│ • MFA        │  │ • Roles      │  │ • Tickets    │  │ • Audit      │
+└──────────────┘  │ • Audit Logs │  │ • Risk       │  └──────────────┘
+                  │ • Compliance │  │ • Vulnerabil │
+                  └──────────────┘  │ • Threats    │
+                                    │ • Policy     │
+                                    │ • Incident   │
+                                    └──────────────┘
+                 │
+     ┌───────────┴────────────┬────────────────┬────────────────┐
+     │                        │                │                │
+     ▼                        ▼                ▼                ▼
+┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐
+│   Business   │  │  Data Access │  │    Cache     │  │    Queue     │
+│   Services   │  │    Layer     │  │  (Redis)     │  │  (Kafka)     │
+└──────────────┘  │ (Sequelize)  │  │              │  │              │
+                  └──────────────┘  └──────────────┘  └──────────────┘
+                 │
+     ┌───────────┴────────────┬────────────────┬────────────────┐
+     │                        │                │                │
+     ▼                        ▼                ▼                ▼
+┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐
+│ PostgreSQL   │  │ Elasticsearch│  │ S3/Blob      │  │  Message     │
+│ (Multi-Tenant)  │ (Audit Logs) │  │ Storage      │  │  Processors  │
+└──────────────┘  └──────────────┘  └──────────────┘  └──────────────┘
+```
+
+## 2. Multi-Tenant Architecture
+
+### Schema-Per-Tenant Pattern (Recommended for Enterprise)
+
+```
+┌─────────────────────────────────────────────┐
+│     Master Database (PostgreSQL)            │
+├─────────────────────────────────────────────┤
+│  Tables:                                    │
+│  - tenants (ID, name, plan, created_at)    │
+│  - billing                                  │
+│  - platform_settings                        │
+│  - feature_flags                            │
+├─────────────────────────────────────────────┤
+│  Connection Pool per Tenant DB:             │
+│  └─ tenant_a (isolated schema)              │
+│  └─ tenant_b (isolated schema)              │
+│  └─ tenant_c (isolated schema)              │
+│  └─ ...                                     │
+└─────────────────────────────────────────────┘
+
+Each Tenant Database Contains:
+┌─────────────────────────────────────────────┐
+│  Tenant A Database                          │
+├─────────────────────────────────────────────┤
+│  - users                                    │
+│  - roles_permissions                        │
+│  - assets (ITAM)                           │
+│  - tickets (ITSM)                          │
+│  - risks                                    │
+│  - vulnerabilities                         │
+│  - incidents                               │
+│  - compliance_controls                      │
+│  - audit_logs                              │
+│  - custom_forms                            │
+│  - module_configurations                    │
+│  ... (12 module tables)                    │
+└─────────────────────────────────────────────┘
+```
+
+**Advantages:**
+- Complete data isolation
+- Per-tenant performance tuning
+- Easy compliance and audit
+- Flexible scaling strategy
+- Per-tenant backup/recovery
+
+## 3. Module-Based Architecture (12 Configurable Modules)
+
+Each module is independently deployable and can be enabled/disabled per tenant:
+
+```
+┌────────────────────────────────────────────────────────────────┐
+│                    MODULE MANAGER                              │
+│  (Handles module routing, permissions, configuration)          │
+└────────────────┬───────────────────────────────────────────────┘
+                 │
+   ┌─────────────┼─────────────┬──────────────┬──────────────┐
+   │             │             │              │              │
+   ▼             ▼             ▼              ▼              ▼
+┌────────┐ ┌────────┐ ┌──────────┐ ┌──────────┐ ┌────────┐
+│ ITAM   │ │ ITSM   │ │Threat    │ │  User    │ │Ticketing
+│Module  │ │Module  │ │Intel     │ │Mgmt      │ │Module
+└────────┘ └────────┘ │Module    │ │Module    │ └────────┘
+                      └──────────┘ └──────────┘
+
+   ┌─────────────┼─────────────┬──────────────┬──────────────┐
+   │             │             │              │              │
+   ▼             ▼             ▼              ▼              ▼
+┌────────┐ ┌────────┐ ┌──────────┐ ┌──────────┐ ┌────────┐
+│ Risk   │ │ Policy │ │Security  │ │Security  │ │Vulnerab
+│Registry│ │Archive │ │Incident  │ │Ops       │ │Module
+└────────┘ └────────┘ │Response  │ │Module    │ └────────┘
+                      │Module    │ └──────────┘
+                      └──────────┘
+
+   ┌─────────────┐               ┌──────────────┐
+   │             │               │              │
+   ▼             ▼               ▼              ▼
+┌────────┐ ┌────────────────────────┐ ┌────────┐
+│Third   │ │ Compliance &           │ │AI      │
+│Party   │ │Framework Management    │ │Module  │
+│Risk    │ │Module                  │ │        │
+└────────┘ └────────────────────────┘ └────────┘
+```
+
+## 4. Authentication & Authorization Flow
+
+```
+User Login
+    │
+    ▼
+┌─────────────────────────────────┐
+│ OAuth2/SAML Provider            │
+│ (Okta, AzureAD, Google)         │
+└────────────┬────────────────────┘
+             │
+    ┌────────▼────────┐
+    │ Verify Identity │
+    └────────┬────────┘
+             │
+    ┌────────▼──────────────────────┐
+    │ Issue JWT Token               │
+    │ Claims: user_id, tenant_id,  │
+    │ roles, permissions            │
+    └────────┬──────────────────────┘
+             │
+    ┌────────▼──────────────────────┐
+    │ API Request with Token        │
+    └────────┬──────────────────────┘
+             │
+    ┌────────▼──────────────────────┐
+    │ Verify Token + RBAC Checks   │
+    │ Row-Level Security (RLS)      │
+    └────────┬──────────────────────┘
+             │
+    ┌────────▼──────────────────────┐
+    │ Audit Log Entry Created       │
+    └────────┬──────────────────────┘
+             │
+    ┌────────▼──────────────────────┐
+    │ Execute Request               │
+    └──────────────────────────────┘
+```
+
+## 5. Data Flow Architecture
+
+```
+Client Request
+    │
+    ▼
+┌──────────────────────────┐
+│ API Gateway              │
+│ - Rate Limiting          │
+│ - Request Validation     │
+└─────────────┬────────────┘
+              │
+    ┌─────────▼──────────────┐
+    │ Authentication         │
+    │ - Verify JWT           │
+    │ - Extract Claims       │
+    └─────────┬──────────────┘
+              │
+    ┌─────────▼────────────────────┐
+    │ Authorization (RBAC)         │
+    │ - Check Permissions          │
+    │ - Row Level Security         │
+    └─────────┬────────────────────┘
+              │
+    ┌─────────▼────────────────────┐
+    │ Business Logic Service       │
+    │ - Validation                 │
+    │ - Data Transformation        │
+    └─────────┬────────────────────┘
+              │
+    ┌─────────▼────────────────────┐
+    │ Data Access Layer (ORM)      │
+    │ - Query Building             │
+    │ - Caching Check              │
+    └─────────┬────────────────────┘
+              │
+    ┌─────────▼────────────────────┐
+    │ Database Query               │
+    │ (PostgreSQL with RLS)        │
+    └─────────┬────────────────────┘
+              │
+    ┌─────────▼────────────────────┐
+    │ Response Formatting          │
+    │ - Audit Logging              │
+    │ - Cache Update               │
+    └─────────┬────────────────────┘
+              │
+    ┌─────────▼────────────────────┐
+    │ Send Response to Client      │
+    └──────────────────────────────┘
+```
+
+## 6. Asynchronous Processing Flow (Event-Driven)
+
+```
+User Action (e.g., Risk Assessment Submitted)
+    │
+    ▼
+┌──────────────────────────┐
+│ Event Published to       │
+│ Kafka Topic              │
+│ (risk.assessment.created)│
+└─────────────┬────────────┘
+              │
+    ┌─────────┴─────────┬─────────┬──────────┐
+    │                   │         │          │
+    ▼                   ▼         ▼          ▼
+┌──────────────┐ ┌────────────┐ ┌────────┐ ┌────────┐
+│Notification  │ │AI Risk     │ │Audit   │ │Report  │
+│Service       │ │Scoring     │ │Logger  │ │Generator
+│- Email       │ │- ML Model  │ │        │ │        │
+│- Webhook     │ │- Score Cal │ │        │ │        │
+└──────────────┘ └────────────┘ └────────┘ └────────┘
+    │                   │         │          │
+    └─────────┬─────────┴─────────┴──────────┘
+              │
+    ┌─────────▼──────────────────┐
+    │ Results aggregated         │
+    │ & stored in database       │
+    └────────────────────────────┘
+```
+
+## 7. Security Architecture
+
+```
+┌─────────────────────────────────────────────────────┐
+│            SECURITY LAYERS                          │
+├─────────────────────────────────────────────────────┤
+│
+│  Layer 1: Network Security
+│  ├─ DDoS Protection (AWS Shield)
+│  ├─ WAF (Web Application Firewall)
+│  ├─ VPN/Private Networks
+│  └─ TLS 1.3 for all communications
+│
+│  Layer 2: Application Security
+│  ├─ API Authentication (OAuth2/SAML)
+│  ├─ Input Validation & Sanitization
+│  ├─ Rate Limiting & Throttling
+│  ├─ CORS Policy Enforcement
+│  └─ API Key Management (Vault/KMS)
+│
+│  Layer 3: Data Security
+│  ├─ Encryption at Rest (AES-256)
+│  ├─ Encryption in Transit (TLS)
+│  ├─ Database Encryption
+│  ├─ Row-Level Security (RLS)
+│  ├─ Field-Level Encryption (PII)
+│  └─ Secrets Management (HashiCorp Vault)
+│
+│  Layer 4: Access Control
+│  ├─ RBAC (Role-Based Access Control)
+│  ├─ ABAC (Attribute-Based Access Control)
+│  ├─ Row-Level Security (RLS)
+│  ├─ Column-Level Encryption
+│  └─ MFA (Multi-Factor Authentication)
+│
+│  Layer 5: Audit & Monitoring
+│  ├─ Complete Audit Logging
+│  ├─ Real-time Monitoring (ELK Stack)
+│  ├─ Security Event Detection
+│  ├─ Alert & Response Automation
+│  └─ Compliance Reporting
+│
+└─────────────────────────────────────────────────────┘
+```
+
+## 8. Deployment Architecture (Kubernetes)
+
+```
+┌───────────────────────────────────────────────────────────┐
+│                  AWS/Azure Cloud                          │
+├───────────────────────────────────────────────────────────┤
+│
+│  ┌─────────────────────────────────────────────────────┐
+│  │  Kubernetes Cluster (EKS / AKS)                    │
+│  ├─────────────────────────────────────────────────────┤
+│  │
+│  │  ┌──────────────────────────────────────────────┐
+│  │  │  Ingress Controller (Nginx)                  │
+│  │  │  - SSL/TLS Termination                       │
+│  │  │  - Route Management                          │
+│  │  └──────────────────────────────────────────────┘
+│  │
+│  │  ┌──────────────────────────────────────────────┐
+│  │  │  Service Mesh (Istio)                        │
+│  │  │  - Traffic Management                        │
+│  │  │  - Security Policies                         │
+│  │  │  - Observability                             │
+│  │  └──────────────────────────────────────────────┘
+│  │
+│  │  ┌──────────────┬──────────────┬────────────┐
+│  │  │              │              │            │
+│  │  ▼              ▼              ▼            ▼
+│  │  Frontend   API Servers    Workers      Ingestion
+│  │  Pod (3x)   Pod (5x)       Pod (3x)    Pod (2x)
+│  │  [React]    [Node.js]      [Processing] [Scanners]
+│  │  replicas   replicas       replicas    replicas
+│  │
+│  │  ┌──────────────────────────────────────────────┐
+│  │  │  Persistent Volumes                          │
+│  │  │  - PostgreSQL Data                           │
+│  │  │  - Elasticsearch Data                        │
+│  │  │  - Redis Cache                               │
+│  │  │  - File Storage                              │
+│  │  └──────────────────────────────────────────────┘
+│  │
+│  │  ┌──────────────────────────────────────────────┐
+│  │  │  External Services                           │
+│  │  │  - RDS (PostgreSQL)                          │
+│  │  │  - ElastiCache (Redis)                       │
+│  │  │  - MSK (Kafka)                               │
+│  │  │  - S3 (File Storage)                         │
+│  │  │  - CloudWatch (Monitoring)                   │
+│  │  └──────────────────────────────────────────────┘
+│  │
+│  └─────────────────────────────────────────────────────┘
+│
+└───────────────────────────────────────────────────────────┘
+```
+
+## 9. High Availability & Disaster Recovery
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Multi-Region Active-Active Setup                          │
+├─────────────────────────────────────────────────────────────┤
+│
+│  Primary Region (US-East)          Secondary Region (EU)
+│  ┌─────────────────────────┐      ┌────────────────────┐
+│  │ Kubernetes Cluster      │◄─────┤ Kubernetes Cluster │
+│  │ - 3 Master Nodes        │      │ - 3 Master Nodes   │
+│  │ - 10+ Worker Nodes      │ ──┐  │ - 10+ Worker Nodes │
+│  │ - Helm Deployed Apps    │   │  │ - Helm Deployed    │
+│  └─────────────────────────┘   │  └────────────────────┘
+│  ┌─────────────────────────┐   │
+│  │ PostgreSQL (Primary)    │   │
+│  │ - Multi-AZ              │   │  ┌────────────────────┐
+│  │ - Streaming Replication ││┐ ├─►│ PostgreSQL (Replica)
+│  │ - Automated Backups     │ │ │  │ - Multi-AZ         │
+│  └─────────────────────────┘ │ │  └────────────────────┘
+│  ┌─────────────────────────┐ │ │
+│  │ RTO: 15 min             │ │ │
+│  │ RPO: 5 min              │ │ │
+│  └─────────────────────────┘ │ │
+│                              │ │
+│  ┌─────────────────────────┐ │ │
+│  │ Route 53 (DNS)          │ │ │
+│  │ - Health Check          │ │ │
+│  │ - Failover Routing      │ │ │
+│  └─────────────────────────┘ │ │
+│          ▲   ▲               │ │
+│          │   └───────────────┘ │
+│          └─────────────────────┘
+
+RTO (Recovery Time Objective): 15 minutes
+RPO (Recovery Point Objective): 5 minutes
+Availability SLA: 99.95%
+```
+
+## 10. Monitoring & Observability Stack
+
+```
+┌─────────────────────────────────────────────────────────┐
+│          Observability & Monitoring Stack               │
+├─────────────────────────────────────────────────────────┤
+│
+│  ┌──────────────────┐
+│  │ Application      │
+│  │ - Business Logic │
+│  │ - API Handlers   │
+│  └────────┬─────────┘
+│           │
+│    ┌──────┴───────┬────────────┬───────────┐
+│    │              │            │           │
+│    ▼              ▼            ▼           ▼
+│  ┌────────────┐┌────────────┐┌────────────┐┌────────────┐
+│  │ Prometheus ││  Datadog   ││   New      ││  CloudWatch
+│  │ Exporter   ││  Agent     ││  Relic    ││            │
+│  └────────────┘└────────────┘└────────────┘└────────────┘
+│                  │              │           │
+│           ┌──────┴──────┬───────┴───────────┴────────┐
+│           │             │                            │
+│           ▼             ▼                            ▼
+│    ┌─────────────┐ ┌──────────────┐  ┌──────────────────┐
+│    │ Metrics     │ │ Logs         │  │ Traces           │
+│    │ - CPU       │ │ - ELK Stack  │  │ - Jaeger/Tempo   │
+│    │ - Memory    │ │ - CloudWatch │  │ - Distributed    │
+│    │ - Disk      │ │ Logs         │  │   Tracing        │
+│    │ - Requests  │ │ - Splunk     │  │ - Traffic Flow   │
+│    └─────────────┘ └──────────────┘  └──────────────────┘
+│
+│    ┌──────────────────────────────────────────────────┐
+│    │ Visualization & Alerting                         │
+│    │ - Grafana Dashboards                             │
+│    │ - AlertManager Notifications                     │
+│    │ - PagerDuty Integration                          │
+│    │ - Slack Alerts                                   │
+│    └──────────────────────────────────────────────────┘
+│
+└─────────────────────────────────────────────────────────┘
+```
+
+## 11. Integration Architecture
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│         GRC Platform with Third-Party Integrations           │
+├──────────────────────────────────────────────────────────────┤
+│
+│                        GRC Platform
+│                              │
+│    ┌──────────────┬──────────┼──────────┬──────────────┐
+│    │              │          │          │              │
+│    ▼              ▼          ▼          ▼              ▼
+│  ┌──────────┐  ┌──────────┐┌──────────┐┌──────────┐  ┌──────────┐
+│  │ SIEM     │  │ Cloud    ││EDR/XDR   ││Ticketing │  │ Vuln    │
+│  │Splunk    │  │Providers ││Crowdstrike││Jira     │  │Scanners│
+│  │ELK       │  │AWS       ││Sentinel   ││Azure    │  │Nessus  │
+│  │Datadog   │  │Azure     ││paloALTO   ││Linear   │  │OpenVAS │
+│  └──────────┘  └──────────┘└──────────┘└──────────┘  └──────────┘
+│    │              │          │          │              │
+│    └──────────────┴──────────┼──────────┴──────────────┘
+│                              │
+│                    ┌─────────▼──────────┐
+│                    │ Integration Hub    │
+│                    │ - REST APIs        │
+│                    │ - Webhooks         │
+│                    │ - Message Queues   │
+│                    │ - Data Mappers     │
+│                    └────────────────────┘
+```
+
+## Key Architectural Principles
+
+1. **Scalability**: Horizontal scaling through Kubernetes, database sharding
+2. **Multi-Tenancy**: Complete data isolation with schema-per-tenant
+3. **Security**: Defense-in-depth with encryption, RBAC, audit logging
+4. **Reliability**: Multi-region active-active, 99.95% SLA
+5. **Modularity**: Independent module deployment, feature toggling
+6. **Observability**: Comprehensive monitoring, logging, tracing
+7. **Extensibility**: Integration marketplace, API-first design
+8. **Compliance**: Audit trails, data residency, encryption standards
+
+---
+
+**Architecture Version:** 1.0
+**Last Updated:** March 2026

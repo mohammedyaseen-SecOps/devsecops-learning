@@ -1,0 +1,102 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Master Database
+  postgres:
+    image: postgres:16-alpine
+    container_name: grc-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: grc_master_dev
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=en_US.UTF-8"
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infrastructure/db/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+    networks:
+      - grc-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: grc-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - grc-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    command: redis-server --appendonly yes
+
+  # pgAdmin (PostgreSQL Management)
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: grc-pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@grc-platform.local
+      PGADMIN_DEFAULT_PASSWORD: admin
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+    ports:
+      - "5050:80"
+    networks:
+      - grc-network
+    depends_on:
+      - postgres
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+
+  # Redis Commander (Redis Management)
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: grc-redis-commander
+    environment:
+      - REDIS_HOSTS=local:redis:6379
+    ports:
+      - "8081:8081"
+    networks:
+      - grc-network
+    depends_on:
+      - redis
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  pgadmin_data:
+    driver: local
+
+networks:
+  grc-network:
+    driver: bridge
+
+# Services Start Order:
+# 1. postgres - Main database
+# 2. redis - Cache layer
+# 3. pgadmin - DB management UI
+# 4. redis-commander - Redis management UI
+
+# Access URLs:
+# - PostgreSQL: localhost:5432
+# - Redis: localhost:6379
+# - PgAdmin: http://localhost:5050
+# - Redis Commander: http://localhost:8081
+
+# Quick commands:
+# docker-compose up -d           # Start all services
+# docker-compose logs -f         # View logs
+# docker-compose ps              # List running services
+# docker-compose down            # Stop all services
+# docker-compose down -v         # Stop and remove volumes

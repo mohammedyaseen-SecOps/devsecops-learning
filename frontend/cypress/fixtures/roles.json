@@ -1,0 +1,22 @@
+{
+  "adminRole": {
+    "name": "Admin",
+    "description": "Full system access",
+    "permissions": 24
+  },
+  "analystRole": {
+    "name": "Analyst",
+    "description": "Manage compliance and risks",
+    "permissions": 16
+  },
+  "viewerRole": {
+    "name": "Viewer",
+    "description": "Read-only access",
+    "permissions": 8
+  },
+  "customRole": {
+    "name": "Custom Role",
+    "description": "Custom permissions",
+    "permissions": ["read:users", "read:risks", "read:compliance"]
+  }
+}

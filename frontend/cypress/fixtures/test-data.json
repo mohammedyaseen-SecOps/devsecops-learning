@@ -1,0 +1,25 @@
+{
+  "testRisk": {
+    "name": "Insufficient Access Controls",
+    "description": "Lack of proper access control mechanisms",
+    "severity": "Critical",
+    "likelihood": "Likely",
+    "impact": "Catastrophic"
+  },
+  "testTenant": {
+    "name": "Test Tenant Corp",
+    "plan": "Professional",
+    "email": "admin@testtenant.com"
+  },
+  "testIncident": {
+    "title": "Suspicious Login Attempts",
+    "description": "Multiple failed login attempts detected",
+    "severity": "High",
+    "affectedSystems": "Authentication Service"
+  },
+  "testCompliance": {
+    "framework": "ISO 27001",
+    "description": "Information Security Management System",
+    "controls": 114
+  }
+}

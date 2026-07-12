@@ -1,0 +1,26 @@
+{
+  "validUser": {
+    "email": "admin@demo.com",
+    "password": "Demo@1234"
+  },
+  "invalidCredentials": {
+    "email": "admin@demo.com",
+    "password": "WrongPassword123"
+  },
+  "newUser": {
+    "firstName": "John",
+    "lastName": "Doe",
+    "email": "john.doe@test.com",
+    "password": "SecurePass@123"
+  },
+  "adminUser": {
+    "email": "admin@test.com",
+    "password": "Admin@1234",
+    "role": "admin"
+  },
+  "viewerUser": {
+    "email": "viewer@test.com",
+    "password": "Viewer@1234",
+    "role": "viewer"
+  }
+}
